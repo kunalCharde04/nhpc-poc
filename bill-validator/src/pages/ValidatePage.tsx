@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, FileText, Eye, EyeOff } from 'lucide-react'
 import FileUploader from '../components/FileUploader'
 import ValidationResults from '../components/ValidationResults'
 import BillEntriesPreview from '../components/BillEntriesPreview'
@@ -65,21 +65,25 @@ interface ValidationResponse {
   };
 }
 
-interface BillExtractionResponse {
+interface ExtractionWithDocumentsResponse {
   message: string;
   bill_entries: BillEntry[];
-  count: number;
+  bill_entries_count: number;
   extraction_time: number;
+  processed_documents: SupportingDocument[];
+  documents_count: number;
+  documents_processing_time: number;
 }
 
 const ValidatePage = () => {
   const [validationResults, setValidationResults] = useState<ValidationResponse | null>(null)
-  const [extractedEntries, setExtractedEntries] = useState<BillExtractionResponse | null>(null)
+  const [extractedEntries, setExtractedEntries] = useState<ExtractionWithDocumentsResponse | null>(null)
   const [billEntriesFile, setBillEntriesFile] = useState<File | null>(null)
   const [supportingDocs, setSupportingDocs] = useState<File[]>([])
   const [currentStep, setCurrentStep] = useState<'upload' | 'preview' | 'results'>('upload')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showDocs, setShowDocs] = useState(true)
 
   const handleInitialUpload = async (billEntriesPdf: File, supportingDocuments: File[]) => {
     setIsLoading(true)
@@ -88,9 +92,12 @@ const ValidatePage = () => {
     setSupportingDocs(supportingDocuments)
 
     try {
-      // First extract bill entries for preview using the new endpoint
+      // First extract bill entries and (optionally) process supporting docs in one call
       const formData = new FormData()
       formData.append('bill_entries_file', billEntriesPdf)
+      for (const doc of supportingDocuments) {
+        formData.append('supporting_documents', doc)
+      }
       
       // Log what we're sending for debugging
       console.log('File being sent:', billEntriesPdf)
@@ -120,25 +127,22 @@ const ValidatePage = () => {
   }
 
   const handleProceedToValidation = async () => {
-    if (!extractedEntries || !billEntriesFile || supportingDocs.length === 0) return
+    if (!extractedEntries) return
 
     setIsLoading(true)
     setError(null)
 
     try {
-      const formData = new FormData()
-      
-      // Include the original bill entries file 
-      formData.append('bill_entries_file', billEntriesFile)
-      
-      // Include all supporting documents
-      for (const doc of supportingDocs) {
-        formData.append('supporting_documents', doc)
+      // New JSON-only validation flow: send preprocessed arrays
+      const payload = {
+        bill_entries: extractedEntries.bill_entries,
+        processed_documents: extractedEntries.processed_documents,
       }
 
       const response = await fetch('http://localhost:8000/validate-bills', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       })
 
       if (!response.ok) {
@@ -235,13 +239,65 @@ const ValidatePage = () => {
 
         {/* Step 2: Preview Extracted Entries */}
         {currentStep === 'preview' && extractedEntries && (
-          <BillEntriesPreview
-            entries={extractedEntries.bill_entries}
-            count={extractedEntries.count}
-            extractionMethod="AI-powered extraction"
-            onProceedToValidation={handleProceedToValidation}
-            isLoading={isLoading}
-          />
+          <>
+            <BillEntriesPreview
+              entries={extractedEntries.bill_entries}
+              count={extractedEntries.bill_entries_count}
+              extractionMethod="AI-powered extraction"
+              onProceedToValidation={handleProceedToValidation}
+              isLoading={isLoading}
+            />
+
+            {/* Supporting Documents Preview */}
+            <div className="max-w-6xl mx-auto space-y-6 mt-6">
+              <div className="bg-white rounded-lg shadow-sm border p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-3">
+                    <FileText className="h-6 w-6 text-emerald-600" />
+                    <h2 className="text-xl font-semibold text-gray-900">Extracted Supporting Documents</h2>
+                    <span className="px-3 py-1 rounded-full text-sm font-medium bg-emerald-50 text-emerald-800">
+                      {extractedEntries.documents_count} found
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setShowDocs(!showDocs)}
+                    className="inline-flex items-center px-3 py-1 text-gray-600 hover:text-gray-900 transition-colors"
+                  >
+                    {showDocs ? (<><EyeOff className="h-4 w-4 mr-2" />Hide</>) : (<><Eye className="h-4 w-4 mr-2" />Show</>)}
+                  </button>
+                </div>
+
+                {showDocs && (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Bill Number</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hospital</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Confidence</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Filename</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {extractedEntries.processed_documents.map((doc, idx) => (
+                          <tr key={idx} className="hover:bg-gray-50">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900">{doc.bill_number || '-'}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{doc.amount !== undefined ? `₹${doc.amount.toLocaleString()}` : '-'}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{doc.date || '-'}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{doc.hospital_name || '-'}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{doc.confidence_score !== undefined ? (doc.confidence_score * 100).toFixed(0) + '%' : '-'}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{doc.filename}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
         )}
 
         {/* Step 3: Validation Results */}
@@ -249,6 +305,7 @@ const ValidatePage = () => {
           <ValidationResults 
             results={validationResults}
             onReset={handleReset}
+            onBackToPreview={() => setCurrentStep('preview')}
           />
         )}
       </main>

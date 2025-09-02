@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle, AlertTriangle, FileText, RotateCcw, Download } from 'lucide-react'
+import { CheckCircle2, XCircle, AlertTriangle, FileText, RotateCcw, Download, ArrowLeft } from 'lucide-react'
 
 // Updated interfaces to match the new backend API
 interface BillEntry {
@@ -63,9 +63,10 @@ interface ValidationResponse {
 interface ValidationResultsProps {
   results: ValidationResponse;
   onReset: () => void;
+  onBackToPreview?: () => void;
 }
 
-const ValidationResults = ({ results, onReset }: ValidationResultsProps) => {
+const ValidationResults = ({ results, onReset, onBackToPreview }: ValidationResultsProps) => {
   const getStatusIcon = (result: ValidationResult) => {
     if (result.color === 'green') {
       return <CheckCircle2 className="h-5 w-5 text-green-600" />
@@ -126,6 +127,15 @@ const ValidationResults = ({ results, onReset }: ValidationResultsProps) => {
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-semibold text-gray-900">Validation Results</h2>
           <div className="flex space-x-3">
+            {onBackToPreview && (
+              <button
+                onClick={onBackToPreview}
+                className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Back to Preview
+              </button>
+            )}
             <button
               onClick={exportToCSV}
               className="inline-flex items-center px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"

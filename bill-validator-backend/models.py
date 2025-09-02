@@ -95,6 +95,16 @@ class DocumentProcessingResponse(BaseModel):
     count: int = Field(..., description="Number of documents processed")
     processing_time: float = Field(..., description="Processing time in seconds")
 
+class ExtractionWithDocumentsResponse(BaseModel):
+    """Combined response for initial extraction flow (bill entries + optional supporting docs)."""
+    message: str = Field(..., description="Success message")
+    bill_entries: List[BillEntry] = Field(..., description="Extracted bill entries")
+    bill_entries_count: int = Field(..., description="Number of bills extracted")
+    extraction_time: float = Field(..., description="Extraction time in seconds")
+    processed_documents: List[SupportingDocument] = Field(default_factory=list, description="Processed supporting documents")
+    documents_count: int = Field(0, description="Number of supporting documents processed")
+    documents_processing_time: float = Field(0.0, description="Time taken to process supporting documents")
+
 class ErrorResponse(BaseModel):
     """Error response model"""
     error: str = Field(..., description="Error message")

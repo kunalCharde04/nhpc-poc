@@ -25,7 +25,7 @@ interface BillEntriesPreviewProps {
 }
 
 const BillEntriesPreview = ({ entries, count, extractionMethod, onProceedToValidation, isLoading = false }: BillEntriesPreviewProps) => {
-  const [showDetails, setShowDetails] = useState(false)
+  const [showDetails, setShowDetails] = useState(true)
 
   const totalAmount = entries.reduce((sum, entry) => sum + entry.amount, 0)
 

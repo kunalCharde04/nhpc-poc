@@ -296,11 +296,11 @@ You are an expert data extraction agent. Your task is to extract all medical bil
         """
         logger.info(f"📄 Processing {len(documents)} supporting documents")
         start_time = time.time()
-
+        
         if not documents:
             logger.warning("⚠️ No supporting documents provided")
             return []
-
+        
         prompt = """
 You are an expert data extraction agent specializing in inconsistently formatted medical documents.
 A single uploaded file may contain multiple bills, invoices, receipts, or prescriptions.
@@ -333,27 +333,27 @@ Return ONLY a valid JSON array. Do not include explanations or markdown.
 [
   {
     "bill_number": "12345",
-    "amount": 1234.56,
+            "amount": 1234.56,
     "patient_name": "John Doe",
     "date": "23-03-2024",
     "hospital_name": "XYZ Hospital",
-    "confidence_score": 0.95,
+            "confidence_score": 0.95,
     "document_type": "bill"
   },
   ...
 ]
         """
-
+        
         processed_docs = []
-
+        
         for doc in documents:
             try:
                 logger.info(f"Processing {doc.filename}")
-
+                
                 # Reset file pointer
                 if hasattr(doc, 'seek'):
                     await doc.seek(0)
-
+                
                 if not doc.filename:
                     logger.warning("⚠️ Document has no filename")
                     continue
@@ -367,25 +367,25 @@ Return ONLY a valid JSON array. Do not include explanations or markdown.
                 if not file_content:
                     logger.warning(f"⚠️ {doc.filename} is empty")
                     continue
-
+                
                 logger.info(f"📄 File content length: {len(file_content)} bytes")
-
+                
                 # Prepare form data
                 data = aiohttp.FormData()
                 data.add_field('model', 'gemini-2.5-pro')
                 data.add_field('prompt', prompt)
-
+                
                 content_type = getattr(doc, 'content_type', 'application/octet-stream')
                 if not content_type or content_type == 'application/octet-stream':
                     if doc.filename.lower().endswith('.pdf'):
                         content_type = 'application/pdf'
                     elif doc.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                         content_type = 'image/jpeg'
-
-                data.add_field('files', file_content,
-                              filename=doc.filename,
+                
+                data.add_field('files', file_content, 
+                              filename=doc.filename, 
                               content_type=content_type)
-
+                
                 logger.info(f"🚀 Sending request to AI service: {self.ai_service_url}/process")
 
                 connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
@@ -420,15 +420,15 @@ Return ONLY a valid JSON array. Do not include explanations or markdown.
                         logger.error(f"❌ Timeout processing {doc.filename}")
                     except Exception as e:
                         logger.error(f"❌ Error processing {doc.filename}: {e}")
-
+                        
             except Exception as e:
                 logger.error(f"❌ Error processing {doc.filename}: {e}")
                 continue
-
+        
         processing_time = time.time() - start_time
         logger.info(f"✅ Successfully processed {len(processed_docs)} documents from {len(documents)} files in {processing_time:.2f}s")
         return processed_docs
- 
+    
     async def validate_bills_with_documents(self, bill_entries: List[BillEntry], 
                                           supporting_docs: List[SupportingDocument]) -> ValidationResponse:
         """

@@ -1,7 +1,8 @@
 """
 Medical Bill Validation System - FastAPI Backend with Color-Coded Results
 """
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Body
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import List, Optional
@@ -9,7 +10,10 @@ import logging
 import time
 from bill_validator import BillValidator
 from models import (
-    ValidationResponse, BillExtractionResponse, DocumentProcessingResponse, 
+    ValidationResponse, BillExtractionResponse, DocumentProcessingResponse,
+    ExtractionWithDocumentsResponse,
+    BillEntry as BillEntryModel,
+    SupportingDocument as SupportingDocumentModel,
     ErrorResponse
 )
 
@@ -51,9 +55,9 @@ async def root():
             "Yellow: No supporting document found"
         ],
         "endpoints": [
-            "/extract-bills - Extract bill entries from PDF",
+            "/extract-bills - Extract bill entries; optionally process supporting docs too",
             "/process-documents - Process supporting documents",
-            "/validate-bills - Complete validation workflow with color coding"
+            "/validate-bills - Validate using either uploaded files or preprocessed JSON"
         ]
     }
 
@@ -93,9 +97,10 @@ async def test_ai_service():
             "error": str(e)
         }
 
-@app.post("/extract-bills", response_model=BillExtractionResponse)
+@app.post("/extract-bills", response_model=ExtractionWithDocumentsResponse)
 async def extract_bill_entries(
-    bill_entries_file: UploadFile = File(..., description="PDF or image containing bill entries table")
+    bill_entries_file: UploadFile = File(..., description="PDF or image containing bill entries table"),
+    supporting_documents: Optional[List[UploadFile]] = File(None, description="Optional supporting documents to process in same call")
 ):
     """
     Extract bill entries from PDF table and return structured JSON
@@ -145,15 +150,29 @@ async def extract_bill_entries(
             )
         
         extraction_time = time.time() - start_time
-        
-        response = BillExtractionResponse(
-            message="Bill entries extracted successfully", 
-            bill_entries=bill_entries, 
-            count=len(bill_entries),
-            extraction_time=extraction_time
+
+        # Optionally process supporting documents in same call
+        docs_processed: List[SupportingDocumentModel] = []
+        docs_time = 0.0
+        if supporting_documents:
+            logger.info(f"📄 Also processing {len(supporting_documents)} supporting documents in this call")
+            docs_start = time.time()
+            try:
+                docs_processed = await validator.process_supporting_documents(supporting_documents)
+            finally:
+                docs_time = time.time() - docs_start
+
+        response = ExtractionWithDocumentsResponse(
+            message="Extraction completed",
+            bill_entries=bill_entries,
+            bill_entries_count=len(bill_entries),
+            extraction_time=extraction_time,
+            processed_documents=docs_processed,
+            documents_count=len(docs_processed),
+            documents_processing_time=docs_time,
         )
-        
-        logger.info(f"✅ Extracted {len(bill_entries)} bill entries in {extraction_time:.2f}s")
+
+        logger.info(f"✅ Extracted {len(bill_entries)} bill entries in {extraction_time:.2f}s; processed {len(docs_processed)} docs in {docs_time:.2f}s")
         return response
         
     except HTTPException:
@@ -166,7 +185,7 @@ async def extract_bill_entries(
         )
         return JSONResponse(
             status_code=500,
-            content=error_response.dict()
+            content=jsonable_encoder(error_response)
         )
 
 @app.post("/process-documents", response_model=DocumentProcessingResponse)
@@ -225,8 +244,8 @@ async def process_documents(
 
 @app.post("/validate-bills", response_model=ValidationResponse)
 async def validate_bills(
-    bill_entries_file: UploadFile = File(..., description="PDF or image containing bill entries table"),
-    supporting_documents: List[UploadFile] = File(..., description="Supporting bill documents (PDFs/Images)")
+    bill_entries: List[BillEntryModel] = Body(..., description="Pre-extracted bill entries array"),
+    processed_documents: List[SupportingDocumentModel] = Body(..., description="Pre-processed supporting documents array")
 ):
     """
     Complete bill validation workflow with color-coded results
@@ -244,31 +263,9 @@ async def validate_bills(
     making it easy to identify which bills need attention.
     """
     try:
-        logger.info("🚀 Starting complete bill validation workflow with color coding")
-        
-        # Validate file types
-        file_extension = bill_entries_file.filename.lower()
-        if not (file_extension.endswith('.pdf') or 
-                file_extension.endswith(('.jpg', '.jpeg', '.png', '.bmp', '.tiff'))):
-            raise HTTPException(
-                status_code=400, 
-                detail="Bill entries file must be a PDF or image (JPG, PNG, BMP, TIFF) containing the main table"
-            )
-        
-        if not supporting_documents:
-            raise HTTPException(
-                status_code=400, 
-                detail="At least one supporting document must be provided for validation"
-            )
-        
-        # Run complete validation workflow
-        validation_response = await validator.complete_validation_workflow(
-            bill_entries_file, 
-            supporting_documents
-        )
-        
-        logger.info("✅ Validation completed successfully with color-coded results")
-        return validation_response
+        # JSON-only flow: validate directly using provided arrays
+        logger.info("🔁 Validating with preprocessed data (JSON body)")
+        return await validator.validate_bills_with_documents(bill_entries, processed_documents)
         
     except ValueError as e:
         logger.error(f"❌ Validation failed: {str(e)}")
@@ -281,7 +278,7 @@ async def validate_bills(
         )
         return JSONResponse(
             status_code=500,
-            content=error_response.dict()
+            content=jsonable_encoder(error_response)
         )
 
 @app.get("/validation-summary")
@@ -330,11 +327,11 @@ async def global_exception_handler(request, exc):
     logger.error(f"❌ Unhandled exception: {str(exc)}")
     return JSONResponse(
         status_code=500,
-        content={
+        content=jsonable_encoder({
             "error": "Internal server error",
             "details": "An unexpected error occurred. Please try again later.",
             "timestamp": time.time()
-        }
+        })
     )
 
 if __name__ == "__main__":
