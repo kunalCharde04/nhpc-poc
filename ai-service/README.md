@@ -41,6 +41,8 @@ GEMINI_API_KEY=your_actual_gemini_api_key_here
 
 ```bash
 python main.py
+
+uvicorn main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 The service will start on `http://localhost:8001`

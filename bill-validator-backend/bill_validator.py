@@ -6,7 +6,10 @@ import aiohttp
 import json
 import logging
 import time
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
+import re
+from datetime import datetime, date
+from difflib import SequenceMatcher
 from fastapi import UploadFile
 from models import (
     BillEntry, SupportingDocument, ValidationResult, 
@@ -40,43 +43,67 @@ class BillValidator:
         start_time = time.time()
         
         prompt = """
-        Extract all bill entries from this medical bill PDF table. The table contains medical expense entries with the following columns:
-        
-        - SI No (Serial Number)
-        - Bill/Cash Memo
-        - Bill Date (in MM/DD/YY format)
-        - Classification (e.g., HOSPITAL CONSULTATION, MEDICINES, PATHOLOGICAL TEST)
-        - Type Of Treatment (e.g., Allopathic)
-        - Account Code (e.g., 550)
-        - Description (e.g., MEDICAL REIMBURSEMENT SPECIAL DESEASES)
-        - Amount (numerical value only)
-        - Med Pass Amount (numerical value only)
-        - Fin Pass Amount Taxable (numerical value only)
-        - Fin Pass Non Taxable (numerical value only, may be empty)
-        
-        Return ONLY a JSON array like this:
-        [
-            {
-                "si_no": 1,
-                "bill_cash_memo": "vacs2822451",
-                "bill_date": "3/23/24",
-                "classification": "HOSPITAL CONSULTATION",
-                "type_of_treatment": "Allopathic",
-                "account_code": "550",
-                "description": "MEDICAL REIMBURSEMENT SPECIAL DESEASES",
-                "amount": 500.0,
-                "med_pass_amount": 500.0,
-                "fin_pass_amount_taxable": 500.0,
-                "fin_pass_non_taxable": null
-            }
-        ]
-        
-        Important: 
-        - Extract exact amounts as numbers (no currency symbols)
-        - Preserve the exact format of bill numbers and dates
-        - Handle empty fields with null
-        - Ensure all numerical values are properly parsed
-        """
+You are an expert data extraction agent. Your task is to extract all medical bill entries from the provided document. The table of entries may span multiple pages, so you must process the **entire document** to capture every single row.
+
+**Instructions:**
+1.  Locate the table containing medical expense details.
+2.  Extract every entry from this table.
+3.  Format the extracted data into a single JSON array of objects.
+4.  Ensure all data types and formats match the specifications below.
+
+**Column Mapping and Data Types:**
+-   `si_no`: **Number** (e.g., `1`)
+-   `bill_cash_memo`: **String** (e.g., `"vacs2822451"`)
+-   `bill_date`: **String** (e.g., `"3/23/24"`)
+-   `classification`: **String** (e.g., `"HOSPITAL CONSULTATION"`)
+-   `type_of_treatment`: **String** (e.g., `"Allopathic"`)
+-   `account_code`: **String** (e.g., `"550"`)
+-   `description`: **String** (e.g., `"MEDICAL REIMBURSEMENT SPECIAL DESEASES"`)
+-   `amount`: **Number** (e.g., `500.0`)
+-   `med_pass_amount`: **Number** (e.g., `500.0`)
+-   `fin_pass_amount_taxable`: **Number** (e.g., `500.0`)
+-   `fin_pass_non_taxable`: **Number** or `null` if the field is empty.
+
+**Output Requirements:**
+-   Return **ONLY** the raw JSON array.
+-   Do not include any explanations, introductory text, or markdown code fences (like ` ```json `).
+-   If a value is not present, use `null`.
+
+**Example Output Structure:**
+```json
+[
+    {
+        "si_no": 1,
+        "bill_cash_memo": "vacs2822451",
+        "bill_date": "3/23/24",
+        "classification": "HOSPITAL CONSULTATION",
+        "type_of_treatment": "Allopathic",
+        "account_code": "550",
+        "description": "MEDICAL REIMBURSEMENT SPECIAL DESEASES",
+        "amount": 500.0,
+        "med_pass_amount": 500.0,
+        "fin_pass_amount_taxable": 500.0,
+        "fin_pass_non_taxable": null
+    },
+    {
+        "si_no": 2,
+        "bill_cash_memo": "2 506034",
+        "bill_date": "3/23/24",
+        "classification": "MEDICINES",
+        "type_of_treatment": "Allopathic",
+        "account_code": "550",
+        "description": "MEDICAL REIMBURSEMENT SPECIAL DESEASES",
+        "amount": 1970.0,
+        "med_pass_amount": 1970.0,
+        "fin_pass_amount_taxable": 1970.0,
+        "fin_pass_non_taxable": null
+    }
+]
+
+```
+"""
+
+
         
         try:
             # Reset file pointer to beginning
@@ -96,16 +123,6 @@ class BillValidator:
             if not file.content_type:
                 logger.error("❌ File has no content type")
                 raise Exception("File has no content type")
-            
-            # Read file content
-            file_content = await file.read()
-            if not file_content:
-                logger.error("❌ File is empty")
-                return []
-            
-            logger.info(f"📄 File content length: {len(file_content)} bytes")
-            logger.info(f"📄 File content type: {type(file_content)}")
-            logger.info(f"📄 File content first 100 bytes: {file_content[:100]}")
             
             # Test AI service connectivity with proper error handling
             try:
@@ -147,6 +164,16 @@ class BillValidator:
                 elif file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                     content_type = 'image/jpeg'
             
+            # Read file content and add to form data - this will send the original file to Gemini
+            file_content = await file.read()
+            if not file_content:
+                logger.error("❌ File is empty")
+                return []
+            
+            logger.info(f"📄 File content length: {len(file_content)} bytes")
+            logger.info(f"📄 File content type: {type(file_content)}")
+            
+            # Add the file directly to form data - this will send the original file to Gemini
             data.add_field('files', file_content, 
                           filename=file.filename, 
                           content_type=content_type)
@@ -159,7 +186,7 @@ class BillValidator:
             # Make API call with proper error handling
             connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
             async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=300),  # 2 minutes for large image processing
+                timeout=aiohttp.ClientTimeout(total=300),  # 5 minutes for large file processing
                 connector=connector
             ) as session:
                 try:
@@ -264,103 +291,128 @@ class BillValidator:
     
     async def process_supporting_documents(self, documents: List[UploadFile]) -> List[SupportingDocument]:
         """
-        Process supporting documents to extract bill information
+        Process supporting documents to extract bill information.
+        Supports multiple bills within a single file.
         """
         logger.info(f"📄 Processing {len(documents)} supporting documents")
         start_time = time.time()
-        
+
         if not documents:
             logger.warning("⚠️ No supporting documents provided")
             return []
-        
+
         prompt = """
-        Extract bill information from this medical document (prescription/invoice/bill):
-        
-        - Bill Number/Invoice Number (look for invoice numbers, bill numbers, reference numbers, any alphanumeric codes)
-        - Total Amount (numerical value only, look for total, amount, sum, please pay, final amount)
-        - Patient Name (if available)
-        - Date (if available, in any format - extract exactly as shown)
-        - Hospital/Clinic Name (if available)
-        
-        Return ONLY JSON like this:
-        {
-            "bill_number": "extracted bill number or null if not found",
-            "amount": 1234.56,
-            "patient_name": "patient name or null if not found",
-            "date": "date or null if not found",
-            "hospital_name": "hospital name or null if not found",
-            "confidence_score": 0.95,
-            "document_type": "bill or prescription or invoice"
-        }
-        
-        Important: 
-        - Look carefully for bill numbers in various formats (VACS2822451, 5060834, etc.)
-        - Extract amounts from fields like "PLEASE PAY", "TOTAL", "AMOUNT", "SUM"
-        - Extract dates exactly as they appear (e.g., "23-03-2024", "3/23/24")
-        - Return valid JSON only, no additional text
+You are an expert data extraction agent specializing in inconsistently formatted medical documents.
+A single uploaded file may contain multiple bills, invoices, receipts, or prescriptions.
+
+Your job is to return a JSON array where **each object represents one bill/receipt**.
+
+Carefully analyze and extract the following fields for each entry:
+
+### 1. Bill Number
+Look for these labels in order of priority: "Invoice No", "Bill No", "Bill", "No.", "Receipt No".
+
+### 2. Total Amount
+Labels to check: "PLEASE PAY", "Net Amount", "Total Paid Amount", "Bill Amount", "Total", "Recd. Amount", "Amount", "Sum".
+Extract the **final payable amount**.
+
+### 3. Patient Name
+Labels: "Patient Name", "Name".
+
+### 4. Date
+Labels: "Bill Date", "Date".
+If both exist, prefer "Bill Date".
+Keep the original format.
+
+### 5. Hospital/Clinic Name
+Often the most prominent text at the top (e.g., "MAX Healthcare", "ABHISHEK MEDICOS").
+
+### Output Format
+Return ONLY a valid JSON array. Do not include explanations or markdown.
+
+[
+  {
+    "bill_number": "12345",
+    "amount": 1234.56,
+    "patient_name": "John Doe",
+    "date": "23-03-2024",
+    "hospital_name": "XYZ Hospital",
+    "confidence_score": 0.95,
+    "document_type": "bill"
+  },
+  ...
+]
         """
-        
+
         processed_docs = []
-        
+
         for doc in documents:
             try:
                 logger.info(f"Processing {doc.filename}")
-                
+
                 # Reset file pointer
                 if hasattr(doc, 'seek'):
                     await doc.seek(0)
-                
+
+                if not doc.filename:
+                    logger.warning("⚠️ Document has no filename")
+                    continue
+
+                if not doc.content_type:
+                    logger.warning("⚠️ Document has no content type")
+                    continue
+
+                # Read file content
                 file_content = await doc.read()
                 if not file_content:
                     logger.warning(f"⚠️ {doc.filename} is empty")
                     continue
-                
+
+                logger.info(f"📄 File content length: {len(file_content)} bytes")
+
                 # Prepare form data
                 data = aiohttp.FormData()
-                data.add_field('model', 'gemini-2.5-pro')  # Use gemini-2.5-pro as requested
+                data.add_field('model', 'gemini-2.5-pro')
                 data.add_field('prompt', prompt)
-                
-                # Handle content type
+
                 content_type = getattr(doc, 'content_type', 'application/octet-stream')
                 if not content_type or content_type == 'application/octet-stream':
                     if doc.filename.lower().endswith('.pdf'):
                         content_type = 'application/pdf'
                     elif doc.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                         content_type = 'image/jpeg'
-                
-                data.add_field('files', file_content, 
-                              filename=doc.filename, 
+
+                data.add_field('files', file_content,
+                              filename=doc.filename,
                               content_type=content_type)
-                
-                # Make API call
+
+                logger.info(f"🚀 Sending request to AI service: {self.ai_service_url}/process")
+
                 connector = aiohttp.TCPConnector(limit=100, limit_per_host=30)
-                async with aiohttp.ClientSession(
-                    timeout=self.timeout,
-                    connector=connector
-                ) as session:
+                async with aiohttp.ClientSession(timeout=self.timeout, connector=connector) as session:
                     try:
                         async with session.post(f"{self.ai_service_url}/process", data=data) as response:
+                            logger.info(f"📡 AI service response status: {response.status}")
+
                             if response.status == 200:
                                 result = await response.json()
-                                doc_data = self._parse_json_from_response(result, expect_dict=True)
-                                
-                                if doc_data:
-                                    # Add metadata and create supporting document
-                                    doc_data['filename'] = doc.filename
-                                    doc_data['extracted_text'] = str(result.get('result', {}).get('raw_response', ''))[:500]
-                                    
-                                    # Set defaults for missing fields
-                                    doc_data.setdefault('confidence_score', 0.9)
-                                    doc_data.setdefault('document_type', 'document')
-                                    
-                                    try:
-                                        supporting_doc = SupportingDocument(**doc_data)
-                                        processed_docs.append(supporting_doc)
-                                        logger.info(f"✅ Processed {doc.filename}")
-                                    except Exception as e:
-                                        logger.warning(f"⚠️ Invalid document data for {doc.filename}: {e}")
+                                doc_data_list = self._parse_json_from_response(result, expect_dict=False)
+
+                                if doc_data_list and isinstance(doc_data_list, list):
+                                    for entry in doc_data_list:
+                                        entry['filename'] = doc.filename
+                                        entry['extracted_text'] = str(result.get('result', {}).get('raw_response', ''))[:500]
+                                        entry.setdefault('confidence_score', 0.9)
+                                        entry.setdefault('document_type', 'document')
+
+                                        try:
+                                            supporting_doc = SupportingDocument(**entry)
+                                            processed_docs.append(supporting_doc)
+                                            logger.info(f"✅ Extracted bill from {doc.filename}")
+                                        except Exception as e:
+                                            logger.warning(f"⚠️ Invalid entry in {doc.filename}: {e}")
                                 else:
-                                    logger.warning(f"⚠️ No data extracted from {doc.filename}")
+                                    logger.warning(f"⚠️ No valid array extracted from {doc.filename}")
                             else:
                                 error_text = await response.text()
                                 logger.error(f"❌ Failed to process {doc.filename}: {response.status} - {error_text[:100]}")
@@ -368,111 +420,287 @@ class BillValidator:
                         logger.error(f"❌ Timeout processing {doc.filename}")
                     except Exception as e:
                         logger.error(f"❌ Error processing {doc.filename}: {e}")
-                        
+
             except Exception as e:
-                logger.error(f"❌ Error processing {doc.filename}: {str(e)}")
+                logger.error(f"❌ Error processing {doc.filename}: {e}")
                 continue
-        
+
         processing_time = time.time() - start_time
-        logger.info(f"✅ Successfully processed {len(processed_docs)}/{len(documents)} documents in {processing_time:.2f}s")
+        logger.info(f"✅ Successfully processed {len(processed_docs)} documents from {len(documents)} files in {processing_time:.2f}s")
         return processed_docs
-    
+ 
     async def validate_bills_with_documents(self, bill_entries: List[BillEntry], 
                                           supporting_docs: List[SupportingDocument]) -> ValidationResponse:
         """
-        Validate bills against supporting documents and return color-coded results
+        Validate bills against supporting documents using weighted scoring:
+        - Bill number (50%), Amount (30%), Date (20%)
+        - High match threshold 0.80, partial threshold 0.55
+        - Color coding: green (perfect), orange (partial), red (no match)
         """
-        logger.info("🔍 Validating bills against supporting documents")
+        logger.info("🔍 Validating bills against supporting documents (scoring-based)")
         start_time = time.time()
         
         if not bill_entries:
             raise ValueError("No bill entries to validate")
         
-        validation_results = []
-        matched_count = 0
-        partial_count = 0
-        unmatched_count = 0
-        
-        for bill_entry in bill_entries:
+        # Tuning knobs
+        HIGH_MATCH_THRESHOLD = 0.80
+        PARTIAL_MATCH_THRESHOLD = 0.55
+        AMOUNT_ABS_TOLERANCE = 1.0
+        AMOUNT_REL_TOLERANCE = 0.005
+
+        # Helpers (scoped to this method)
+        def norm_text(s: Optional[str]) -> Optional[str]:
+            if s is None:
+                return None
+            s2 = str(s).strip().lower()
+            return re.sub(r"\s+", " ", s2) or None
+
+        def only_alnum(s: str) -> str:
+            return re.sub(r"[^0-9a-z]", "", s.lower())
+
+        def canon_bill_no(s: Optional[str]) -> Optional[str]:
+            if not s:
+                return None
+            t = str(s).strip().lower()
+            t = t.replace("o", "0")
+            t = re.sub(r"\s+", "", t)
+            return t
+
+        def bill_no_forms(s: Optional[str]) -> Set[str]:
+            if not s:
+                return set()
+            base = canon_bill_no(s)
+            forms: Set[str] = set()
+            if not base:
+                return forms
+            forms.add(base)
+            forms.add(base.replace("/", ""))
+            forms.add(base.replace("-", ""))
+            forms.add(only_alnum(base))
+            forms.add(re.sub(r"\b0+(\d)", r"\1", base))
+            return {f for f in forms if f}
+
+        def parse_amount(val: Optional[object]) -> Optional[float]:
+            if val is None:
+                return None
+            if isinstance(val, (int, float)):
+                return float(val)
+            s = str(val)
+            s = re.sub(r"[₹$,]", "", s).strip()
+            m = re.findall(r"-?\d+(?:\.\d+)?", s)
+            if not m:
+                return None
             try:
-                # Try to find matching document
-                matched_doc, match_score = self._find_best_matching_document(bill_entry, supporting_docs)
-                
-                if matched_doc and match_score >= 0.8:  # High confidence match
-                    # Check for perfect match vs partial match
-                    is_perfect_match = self._is_perfect_match(bill_entry, matched_doc)
-                    
-                    if is_perfect_match:
-                        match_status = MatchStatus.MATCHED
-                        color = "green"
-                        matched_count += 1
-                        notes = "Perfect match with supporting document"
-                    else:
-                        match_status = MatchStatus.PARTIAL_MATCH
-                        color = "orange"  # Changed from red to orange for partial matches
-                        partial_count += 1
-                        notes = "Partial match - some fields don't match"
-                    
-                    # Create validation result with proper error handling
-                    validation_result = ValidationResult(
-                        bill_entry=bill_entry,
-                        match_status=match_status,
-                        matched_document=matched_doc,
-                        color=color,
-                        bill_number_match=self._compare_bill_numbers(
-                            bill_entry.bill_cash_memo, 
-                            matched_doc.bill_number
-                        ),
-                        amount_match=self._compare_amounts(
-                            bill_entry.amount, 
-                            matched_doc.amount
-                        ),
-                        date_match=self._compare_dates(
-                            bill_entry.bill_date, 
-                            matched_doc.date
-                        ),
-                        mismatches=self._get_mismatch_details(bill_entry, matched_doc),
-                        notes=notes
-                    )
-                    
+                return float(m[-1])
+            except ValueError:
+                return None
+
+        def parse_possible_dates(s: Optional[str]) -> Set[date]:
+            if not s:
+                return set()
+            s2 = str(s).strip()
+            primary = (
+                "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d.%m.%Y",
+                "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y",
+                "%A, %B %d, %Y", "%d-%b-%Y", "%d-%B-%Y",
+            )
+            alt = ("%d-%m-%y", "%d/%m/%y", "%m/%d/%y", "%m/%d/%Y")
+            out: Set[date] = set()
+            for fmt in list(primary) + list(alt):
+                try:
+                    out.add(datetime.strptime(s2, fmt).date())
+                except Exception:
+                    pass
+            if re.match(r"^\d{1,2}[\-/]\d{1,2}[\-/]\d{2,4}$", s2):
+                parts = re.split(r"[\-/]", s2)
+                if len(parts) == 3:
+                    d1, d2, y = parts
+                    for yfmt in ("%y", "%Y"):
+                        for dd_first in (True, False):
+                            try:
+                                if dd_first:
+                                    dt = datetime.strptime(f"{d1}-{d2}-{y}", f"%d-%m-{yfmt}").date()
+                                else:
+                                    dt = datetime.strptime(f"{d1}-{d2}-{y}", f"%m-%d-{yfmt}").date()
+                                out.add(dt)
+                            except Exception:
+                                pass
+            return out
+
+        def similar(a: str, b: str) -> float:
+            return SequenceMatcher(a=a, b=b).ratio()
+
+        def bill_no_similarity(a: Optional[str], b: Optional[str]) -> float:
+            if not a or not b:
+                return 0.0
+            A = bill_no_forms(a)
+            B = bill_no_forms(b)
+            if A & B:
+                return 1.0
+            best = 0.0
+            for fa in A:
+                for fb in B:
+                    best = max(best, similar(only_alnum(fa), only_alnum(fb)))
+            return best
+
+        def amount_similarity(a: Optional[object], b: Optional[object]) -> Tuple[float, bool]:
+            fa = parse_amount(a)
+            fb = parse_amount(b)
+            if fa is None or fb is None:
+                return 0.0, False
+            diff = abs(fa - fb)
+            tol = max(AMOUNT_ABS_TOLERANCE, AMOUNT_REL_TOLERANCE * max(abs(fa), abs(fb)))
+            ok = diff <= tol
+            return (1.0 if ok else max(0.0, 1.0 - diff / (tol * 3))), ok
+
+        def date_similarity(a: Optional[str], b: Optional[str]) -> Tuple[float, bool]:
+            if not a or not b:
+                return 0.0, False
+            A = parse_possible_dates(a)
+            B = parse_possible_dates(b)
+            if not A or not B:
+                na = norm_text(a)
+                nb = norm_text(b)
+                if na and nb and na == nb:
+                    return 1.0, True
+                return 0.0, False
+            if A & B:
+                return 1.0, True
+            best = 0.0
+            for da in A:
+                for db in B:
+                    delta = abs((da - db).days)
+                    if delta == 1:
+                        best = max(best, 0.7)
+                    elif delta <= 3:
+                        best = max(best, 0.4)
+            return best, best >= 0.99
+
+        def score_document(bill: BillEntry, doc: SupportingDocument) -> Tuple[float, Dict[str, float], Dict[str, bool]]:
+            bn = bill_no_similarity(getattr(bill, 'bill_cash_memo', None), getattr(doc, 'bill_number', None))
+            amt_score, amt_eq = amount_similarity(getattr(bill, 'amount', None), getattr(doc, 'amount', None))
+            dt_score, dt_eq = date_similarity(getattr(bill, 'bill_date', None), getattr(doc, 'date', None))
+            field_scores = {"bill_number": bn, "amount": amt_score, "date": dt_score}
+            score = bn * 0.50 + amt_score * 0.30 + dt_score * 0.20
+            return score, field_scores, {"amount_equal": amt_eq, "date_equal": dt_eq}
+
+        def get_mismatches(bill: BillEntry, doc: Optional[SupportingDocument], fs: Dict[str, float], flags: Dict[str, bool]) -> List[str]:
+            if doc is None:
+                return ["No supporting document found"]
+            issues: List[str] = []
+            if fs.get("bill_number", 0.0) < 0.99:
+                issues.append(f"Bill number differs (score={fs.get('bill_number', 0.0):.2f})")
+            if not flags.get("amount_equal", False):
+                issues.append(f"Amount differs (bill={getattr(bill, 'amount', None)}, doc={getattr(doc, 'amount', None)})")
+            if not flags.get("date_equal", False):
+                issues.append(f"Date differs (bill={getattr(bill, 'bill_date', None)}, doc={getattr(doc, 'date', None)})")
+            return issues or ["Minor formatting differences"]
+
+        validation_results: List[ValidationResult] = []
+        matched_count = partial_count = unmatched_count = 0
+
+        for bill in bill_entries:
+            try:
+                # Score all supporting docs and pick best
+                candidates: List[Tuple[SupportingDocument, float, Dict[str, float], Dict[str, bool]]] = []
+                for d in supporting_docs or []:
+                    try:
+                        s, fs, flg = score_document(bill, d)
+                        candidates.append((d, s, fs, flg))
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error scoring document {getattr(d, 'filename', 'unknown')}: {e}")
+                candidates.sort(key=lambda x: x[1], reverse=True)
+
+                if candidates:
+                    best_doc, best_score, field_scores, flags = candidates[0]
                 else:
-                    # No matching document found
-                    match_status = MatchStatus.NOT_MATCHED
-                    color = "red"  # Changed to red for unmatched
-                    unmatched_count += 1
-                    
-                    validation_result = ValidationResult(
-                        bill_entry=bill_entry,
-                        match_status=match_status,
-                        matched_document=None,
+                    best_doc, best_score, field_scores, flags = None, 0.0, {}, {"amount_equal": False, "date_equal": False}
+
+                if best_doc and best_score >= HIGH_MATCH_THRESHOLD:
+                    # Perfect vs partial
+                    bn_ok = field_scores.get("bill_number", 0.0) >= 0.99
+                    amt_ok = flags.get("amount_equal", False)
+                    date_ok = flags.get("date_equal", False)
+                    if bn_ok and amt_ok and date_ok:
+                        status = MatchStatus.MATCHED
+                        color = "green"
+                        notes = "Perfect match with supporting document"
+                        matched_count += 1
+                    else:
+                        status = MatchStatus.PARTIAL_MATCH
+                        color = "orange"
+                        notes = "Partial match - some fields do not strictly match"
+                        partial_count += 1
+
+                    vr = ValidationResult(
+                        bill_entry=bill,
+                        match_status=status,
+                        matched_document=best_doc,
                         color=color,
+                        bill_number_match=bn_ok,
+                        amount_match=amt_ok,
+                        date_match=date_ok,
+                        mismatches=get_mismatches(bill, best_doc, field_scores, flags),
+                        notes=notes,
+                        match_score=best_score,
+                        field_scores=field_scores,
+                    )
+                elif best_doc and best_score >= PARTIAL_MATCH_THRESHOLD:
+                    # Low-confidence partial
+                    bn_ok = field_scores.get("bill_number", 0.0) >= 0.80
+                    amt_ok = flags.get("amount_equal", False)
+                    date_ok = flags.get("date_equal", False)
+                    vr = ValidationResult(
+                        bill_entry=bill,
+                        match_status=MatchStatus.PARTIAL_MATCH,
+                        matched_document=best_doc,
+                        color="orange",
+                        bill_number_match=bn_ok,
+                        amount_match=amt_ok,
+                        date_match=date_ok,
+                        mismatches=get_mismatches(bill, best_doc, field_scores, flags),
+                        notes="Low-confidence partial match",
+                        match_score=best_score,
+                        field_scores=field_scores,
+                    )
+                    partial_count += 1
+                else:
+                    vr = ValidationResult(
+                        bill_entry=bill,
+                        match_status=MatchStatus.NOT_MATCHED,
+                        matched_document=None,
+                        color="red",
                         bill_number_match=False,
                         amount_match=False,
                         date_match=False,
                         mismatches=["No supporting document found"],
-                        notes="No supporting document found for this bill"
+                        notes="No supporting document found for this bill",
+                        match_score=0.0,
+                        field_scores={},
                     )
+                    unmatched_count += 1
                 
-                validation_results.append(validation_result)
-                
+                validation_results.append(vr)
             except Exception as e:
-                logger.error(f"❌ Error validating bill entry {bill_entry.si_no}: {e}")
-                # Create error validation result
-                error_result = ValidationResult(
-                    bill_entry=bill_entry,
+                logger.error(f"❌ Error validating bill entry {getattr(bill, 'si_no', 'unknown')}: {e}")
+                validation_results.append(
+                    ValidationResult(
+                        bill_entry=bill,
                     match_status=MatchStatus.NOT_MATCHED,
                     matched_document=None,
                     color="red",
                     bill_number_match=False,
                     amount_match=False,
                     date_match=False,
-                    mismatches=[f"Validation error: {str(e)}"],
-                    notes=f"Error during validation: {str(e)}"
+                        mismatches=[f"Validation error: {e}"],
+                        notes=f"Error during validation: {e}",
+                        match_score=0.0,
+                        field_scores={},
+                    )
                 )
-                validation_results.append(error_result)
                 unmatched_count += 1
         
-        # Create summary
         processing_time = time.time() - start_time
         summary = ValidationSummary(
             total_bills=len(bill_entries),
@@ -482,7 +710,6 @@ class BillValidator:
             processing_time=processing_time
         )
         
-        # Create complete response
         response = ValidationResponse(
             summary=summary,
             bill_entries=bill_entries,
@@ -924,6 +1151,7 @@ class BillValidator:
             # Step 2: Process supporting documents
             logger.info("📄 Step 2: Processing supporting documents...")
             processed_docs = await self.process_supporting_documents(supporting_docs)
+            print(processed_docs)
             
             logger.info(f"✅ Processed {len(processed_docs)} supporting documents")
             

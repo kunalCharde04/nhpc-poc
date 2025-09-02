@@ -1,5 +1,6 @@
 """
 Gemini AI Service for Medical Bill Validation
+Enhanced with direct PDF processing for better table extraction and document analysis
 """
 import os
 import logging
@@ -105,25 +106,39 @@ class GeminiAIService:
                         logger.info(f"✅ Image added to content parts")
                         
                     elif file.content_type == 'application/pdf':
-                        # Process PDF files by extracting text content
+                        # Send PDF directly to Gemini for better processing
                         logger.info(f"📄 Processing as PDF: {file.filename}")
-                        if PDF_AVAILABLE:
-                            try:
-                                pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
-                                pdf_text = ""
-                                for page_num in range(len(pdf_reader.pages)):
-                                    page = pdf_reader.pages[page_num]
-                                    pdf_text += f"\n--- Page {page_num + 1} ---\n"
-                                    pdf_text += page.extract_text()
-                                
-                                content_parts.append(f"PDF Document: {file.filename}\n\nContent:\n{pdf_text}")
-                                logger.info(f"✅ Successfully extracted text from PDF: {file.filename}, text length: {len(pdf_text)}")
-                            except Exception as e:
-                                logger.warning(f"⚠️ Error processing PDF {file.filename}: {e}")
-                                content_parts.append(f"[Error processing PDF: {file.filename} - {str(e)}]")
-                        else:
-                            logger.warning(f"⚠️ PDF processing not available - PyPDF2 not installed")
-                            content_parts.append(f"[PDF processing not available - {file.filename}]")
+                        try:
+                            # Use the correct Gemini file handling approach
+                            # Create a file object that Gemini can handle
+                            pdf_file = {
+                                "mime_type": "application/pdf",
+                                "data": file_content
+                            }
+                            
+                            # Add the PDF file directly to content parts
+                            content_parts.append(pdf_file)
+                            logger.info(f"✅ PDF file added directly to Gemini: {file.filename}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Error processing PDF {file.filename}: {e}")
+                            # Fallback to text extraction if direct PDF fails
+                            if PDF_AVAILABLE:
+                                try:
+                                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
+                                    pdf_text = ""
+                                    for page_num in range(len(pdf_reader.pages)):
+                                        page = pdf_reader.pages[page_num]
+                                        pdf_text += f"\n--- Page {page_num + 1} ---\n"
+                                        pdf_text += page.extract_text()
+                                    
+                                    content_parts.append(f"PDF Document: {file.filename}\n\nContent:\n{pdf_text}")
+                                    logger.info(f"✅ Fallback: extracted text from PDF: {file.filename}, text length: {len(pdf_text)}")
+                                except Exception as fallback_e:
+                                    logger.error(f"❌ Both direct PDF and text extraction failed for {file.filename}: {fallback_e}")
+                                    content_parts.append(f"[Error processing PDF: {file.filename} - {str(fallback_e)}]")
+                            else:
+                                logger.error(f"❌ PDF processing failed and PyPDF2 not available for {file.filename}")
+                                content_parts.append(f"[PDF processing failed: {file.filename} - {str(e)}]")
                         
                     elif file.content_type and file.content_type.startswith('text/'):
                         # Process text files
@@ -144,6 +159,7 @@ class GeminiAIService:
             # Generate response using Gemini
             logger.info(f"🚀 Sending request to Gemini with {len(content_parts)} content parts")
             logger.info(f"📝 Content parts: {[type(part).__name__ for part in content_parts]}")
+            logger.info(f"📝 Content details: {[f'{type(part).__name__}: {getattr(part, "mime_type", "text")}' if hasattr(part, 'mime_type') else f'{type(part).__name__}' for part in content_parts]}")
             
             try:
                 response = processing_model.generate_content(content_parts)
@@ -192,6 +208,7 @@ class GeminiAIService:
                 "universal_ai_processing",
                 "image_analysis",
                 "text_processing",
+                "pdf_processing",
                 "multi_modal_understanding",
                 "custom_prompts"
             ]
