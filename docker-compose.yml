@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  ai-service:
+    build:
+      context: ./ai-service
+    container_name: ai-service
+    environment:
+      - AI_SERVICE_HOST=0.0.0.0
+      - AI_SERVICE_PORT=8001
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    ports:
+      - "5003:8001"
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./bill-validator-backend
+    container_name: backend
+    environment:
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8000
+      - AI_SERVICE_URL=http://ai-service:8001
+    depends_on:
+      - ai-service
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./bill-validator
+    container_name: frontend
+    depends_on:
+      - backend
+    ports:
+      - "5002:5002"
+    restart: unless-stopped
+
+networks:
+  default:
+    name: nhpc-net
+

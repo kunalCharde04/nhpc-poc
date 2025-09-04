@@ -110,3 +110,20 @@ class ErrorResponse(BaseModel):
     error: str = Field(..., description="Error message")
     details: Optional[str] = Field(None, description="Additional error details")
     timestamp: datetime = Field(default_factory=datetime.now, description="Error timestamp")
+
+# ===== Auth Models =====
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+class User(BaseModel):
+    id: int
+    username: str
+    is_active: bool = True
+
+class UserCreate(BaseModel):
+    username: str
+    password: str

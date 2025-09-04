@@ -1,7 +1,7 @@
 """
 Medical Bill Validation System - FastAPI Backend with Color-Coded Results
 """
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Body
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Body, Depends
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -14,8 +14,15 @@ from models import (
     ExtractionWithDocumentsResponse,
     BillEntry as BillEntryModel,
     SupportingDocument as SupportingDocumentModel,
-    ErrorResponse
+    ErrorResponse,
+    Token, TokenData, User, UserCreate
 )
+from datetime import datetime, timedelta
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +45,91 @@ app.add_middleware(
 
 # Initialize bill validator
 validator = BillValidator()
+
+# ==== Auth setup ====
+SECRET_KEY = "change-this-secret-in-.env"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///./auth.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class UserDB(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def verify_password(plain_password: str, password_hash: str) -> bool:
+    return pwd_context.verify(plain_password, password_hash)
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_user_by_username(db: Session, username: str) -> Optional[UserDB]:
+    return db.query(UserDB).filter(UserDB.username == username).first()
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    user_db = get_user_by_username(db, username)
+    if user_db is None:
+        raise credentials_exception
+    return User(id=user_db.id, username=user_db.username, is_active=user_db.is_active)
+
+def auth_required(current_user: User = Depends(get_current_user)):
+    return current_user
+
+# ==== Auth routes ====
+@app.post("/auth/register", response_model=User)
+def register(user_in: UserCreate, db: Session = Depends(get_db)):
+    if get_user_by_username(db, user_in.username):
+        raise HTTPException(status_code=400, detail="Username already registered")
+    user_db = UserDB(username=user_in.username, password_hash=hash_password(user_in.password))
+    db.add(user_db)
+    db.commit()
+    db.refresh(user_db)
+    return User(id=user_db.id, username=user_db.username, is_active=user_db.is_active)
+
+@app.post("/auth/login", response_model=Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user_db = get_user_by_username(db, form_data.username)
+    if not user_db or not verify_password(form_data.password, user_db.password_hash):
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+    access_token = create_access_token({"sub": user_db.username})
+    return Token(access_token=access_token)
 
 @app.get("/")
 async def root():
@@ -100,7 +192,8 @@ async def test_ai_service():
 @app.post("/extract-bills", response_model=ExtractionWithDocumentsResponse)
 async def extract_bill_entries(
     bill_entries_file: UploadFile = File(..., description="PDF or image containing bill entries table"),
-    supporting_documents: Optional[List[UploadFile]] = File(None, description="Optional supporting documents to process in same call")
+    supporting_documents: Optional[List[UploadFile]] = File(None, description="Optional supporting documents to process in same call"),
+    _: User = Depends(auth_required)
 ):
     """
     Extract bill entries from PDF table and return structured JSON
@@ -190,7 +283,8 @@ async def extract_bill_entries(
 
 @app.post("/process-documents", response_model=DocumentProcessingResponse)
 async def process_documents(
-    supporting_documents: List[UploadFile] = File(..., description="Supporting bill documents (PDFs/Images)")
+    supporting_documents: List[UploadFile] = File(..., description="Supporting bill documents (PDFs/Images)"),
+    _: User = Depends(auth_required)
 ):
     """
     Process supporting documents to extract bill information
@@ -245,7 +339,8 @@ async def process_documents(
 @app.post("/validate-bills", response_model=ValidationResponse)
 async def validate_bills(
     bill_entries: List[BillEntryModel] = Body(..., description="Pre-extracted bill entries array"),
-    processed_documents: List[SupportingDocumentModel] = Body(..., description="Pre-processed supporting documents array")
+    processed_documents: List[SupportingDocumentModel] = Body(..., description="Pre-processed supporting documents array"),
+    _: User = Depends(auth_required)
 ):
     """
     Complete bill validation workflow with color-coded results

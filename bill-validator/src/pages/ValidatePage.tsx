@@ -106,9 +106,11 @@ const ValidatePage = () => {
       console.log('File size:', billEntriesPdf.size)
       console.log('FormData entries:', Array.from(formData.entries()))
 
-      const response = await fetch('http://localhost:8000/extract-bills', {
+      const token = localStorage.getItem('auth_token')
+      const response = await fetch('/api/extract-bills', {
         method: 'POST',
         body: formData,
+        headers: token ? { 'Authorization': `Bearer ${token}` } : undefined,
       })  
 
       if (!response.ok) {
@@ -139,9 +141,10 @@ const ValidatePage = () => {
         processed_documents: extractedEntries.processed_documents,
       }
 
-      const response = await fetch('http://localhost:8000/validate-bills', {
+      const token = localStorage.getItem('auth_token')
+      const response = await fetch('/api/validate-bills', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
         body: JSON.stringify(payload),
       })
 

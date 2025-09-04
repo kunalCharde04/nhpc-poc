@@ -1,0 +1,20 @@
+FROM python:3.12-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV AI_SERVICE_HOST=0.0.0.0 \
+    AI_SERVICE_PORT=8001
+
+EXPOSE 8001
+
+CMD ["python", "start.py"]
+

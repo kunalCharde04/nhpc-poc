@@ -1,96 +1,107 @@
-# Simple Medical Bill Validation System
+# Medical Bill Validation Backend (FastAPI) — with Authentication
 
-A simplified AI-powered system to validate medical bills against supporting documents.
+AI-powered backend for extracting, processing, and validating medical bills against supporting documents. Includes JWT-based authentication to protect all business endpoints.
 
-## What it does
+## Quick Start
 
-1. **Extract bill entries from PDF** → Shows extracted values to user
-2. **Analyze supporting documents** (prescriptions/invoices) → Extract bill information  
-3. **Find mismatches** → Tell you mismatched bill numbers and amounts
-
-## Files (Simplified!)
-
-- `main.py` - FastAPI backend with 3 simple endpoints
-- `simple_bill_validator.py` - Single file that does everything
-- `models.py` - Data models
-- `start.py` - Startup script
-
-## API Endpoints
-
-### 1. Extract Bill Entries
+1) Install dependencies
 ```bash
-curl -X POST "http://localhost:8000/extract-bill-entries" \
-  -F "bill_entries_pdf=@bills.pdf"
+cd "./bill-validator-backend"
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 2. Process Supporting Documents  
+2) Start AI service (separate terminal)
 ```bash
-curl -X POST "http://localhost:8000/process-documents" \
-  -F "supporting_documents=@doc1.pdf" \
-  -F "supporting_documents=@doc2.pdf"
-```
-
-### 3. Complete Validation (Does Everything)
-```bash
-curl -X POST "http://localhost:8000/validate-bills" \
-  -F "bill_entries_pdf=@bills.pdf" \
-  -F "supporting_documents=@doc1.pdf" \
-  -F "supporting_documents=@doc2.pdf"
-```
-
-## Setup
-
-1. **Start AI Service** (in separate terminal):
-```bash
-cd ../ai-service
+cd "../ai-service"
 python start.py
 ```
 
-2. **Start Backend**:
+3) Start backend
 ```bash
+cd "./bill-validator-backend"
 python start.py
 ```
 
-## How it works
+Backend runs at `http://localhost:8000` and docs at `http://localhost:8000/docs`.
 
-1. Uses **Gemini 2.0 Pro** model for document analysis
-2. Extracts bill numbers, amounts, patient names, dates
-3. Compares bills with supporting documents
-4. Reports mismatches and missing documents
-5. Simple JSON responses - no complex validation objects
+## Configuration
 
-## Response Format
+Environment variables (optional):
+- `AI_SERVICE_URL` (default `http://localhost:8001`)
+- `APP_HOST` (default `0.0.0.0`)
+- `APP_PORT` (default `8000`)
 
+## Authentication
+
+- Auth is JWT (HS256). Tokens are short strings returned by `/auth/login` and must be sent as `Authorization: Bearer <token>`.
+- Users are stored in a local SQLite DB at `bill-validator-backend/auth.db` using SQLAlchemy. Table: `users(id, username, password_hash, is_active, created_at)`.
+- Registration is not exposed in the UI. Use curl to create users.
+
+### Create user (register via curl only)
+```bash
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"StrongPass123!"}'
+```
+
+### Login (get token)
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d 'username=admin&password=StrongPass123!' \
+  | jq
+```
+Response:
 ```json
-{
-  "bill_entries": [
-    {
-      "bill_number": "INV-001",
-      "bill_amount": 1500.50,
-      "patient_name": "John Doe",
-      "date": "2024-01-15",
-      "hospital_name": "City Hospital"
-    }
-  ],
-  "supporting_documents": [
-    {
-      "filename": "receipt1.pdf", 
-      "bill_number": "INV-001",
-      "amount": 1500.50
-    }
-  ],
-  "analysis": {
-    "summary": {
-      "total_bills": 1,
-      "matched_bills": 1,
-      "mismatched_bills": 0,
-      "unmatched_bills": 0
-    },
-    "matched_bills": [...],
-    "mismatches": [...],
-    "unmatched_bills": [...]
-  }
-}
+{ "access_token": "<JWT>", "token_type": "bearer" }
 ```
 
-That's it! Much simpler than before.
+### Use token
+Add header `Authorization: Bearer <JWT>` to all protected endpoints below.
+
+## Endpoints
+
+Public:
+- `GET /` — Health/info
+- `GET /health` — Detailed health
+- `POST /auth/register` — Create user (restricted to curl usage)
+- `POST /auth/login` — Obtain JWT
+
+Protected (require Bearer token):
+- `POST /extract-bills` — Upload bill entries PDF/image; returns structured entries. Multipart: `bill_entries_file=@...` and optional repeated `supporting_documents=@...`
+- `POST /process-documents` — Upload supporting documents only
+- `POST /validate-bills` — JSON flow to validate using preprocessed arrays
+
+### Example: extract bills
+```bash
+TOKEN="<paste-token>"
+curl -X POST http://localhost:8000/extract-bills \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "bill_entries_file=@/path/to/bills.pdf" \
+  -F "supporting_documents=@/path/to/doc1.pdf" \
+  -F "supporting_documents=@/path/to/doc2.jpg"
+```
+
+### Example: validate with JSON
+```bash
+TOKEN="<paste-token>"
+curl -X POST http://localhost:8000/validate-bills \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"bill_entries": [...], "processed_documents": [...]}'
+```
+
+## Tech Notes
+
+- Framework: FastAPI
+- Auth: `python-jose` (JWT), `passlib[bcrypt]` for hashing
+- DB: SQLite via SQLAlchemy (`sqlite:///./auth.db`)
+- File handling: `python-multipart`
+- AI calls: `aiohttp` to the local AI service
+
+## Development
+
+- Dependencies are pinned in `requirements.txt`.
+- On first run, the users table is created automatically.
+- If you need to reset users, stop the server and delete `auth.db`.

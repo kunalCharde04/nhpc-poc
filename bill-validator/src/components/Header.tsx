@@ -1,10 +1,13 @@
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { FileText, Shield, Menu, X } from 'lucide-react'
 import { useState } from 'react'
+import { useAuth } from '../App'
 
 const Header = () => {
   const location = useLocation()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const { token, logout } = useAuth()
+  const navigate = useNavigate()
 
   const navigation = [
     { name: 'Home', href: '/' },
@@ -47,12 +50,21 @@ const Header = () => {
                 {item.name}
               </Link>
             ))}
-            <Link
-              to="/validate"
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
-            >
-              Get Started
-            </Link>
+            {token ? (
+              <button
+                onClick={() => { logout(); navigate('/login') }}
+                className="bg-gray-100 hover:bg-gray-200 text-gray-900 px-6 py-2 rounded-lg font-medium transition-colors"
+              >
+                Sign out
+              </button>
+            ) : (
+              <Link
+                to="/login"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+              >
+                Sign in
+              </Link>
+            )}
           </nav>
 
           {/* Mobile menu button */}
@@ -88,13 +100,22 @@ const Header = () => {
                   {item.name}
                 </Link>
               ))}
-              <Link
-                to="/validate"
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors text-center"
-              >
-                Get Started
-              </Link>
+              {token ? (
+                <button
+                  onClick={() => { logout(); setIsMobileMenuOpen(false); navigate('/login') }}
+                  className="bg-gray-100 hover:bg-gray-200 text-gray-900 px-6 py-2 rounded-lg font-medium transition-colors text-center"
+                >
+                  Sign out
+                </button>
+              ) : (
+                <Link
+                  to="/login"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors text-center"
+                >
+                  Sign in
+                </Link>
+              )}
             </nav>
           </div>
         )}
