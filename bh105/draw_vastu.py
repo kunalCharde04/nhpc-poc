@@ -9,7 +9,7 @@ from matplotlib.patches import Circle
 # Vastu corner/zone tags (true directions)
 for (x,y,t,c) in [(-0.75,5.95,'SW','#6d4c41'),(W+0.75,5.95,'NW','#546e7a'),(-0.75,-0.35,'SE','#e65100'),(W+0.75,-0.35,'NE','#1565c0')]:
     ax.text(x,y,t,fontsize=12,weight='bold',color=c,ha='center',va='center')
-ax.text(1.8,-0.5,'(= EAST wall)',fontsize=7.5,color='#1565c0',ha='center')
+ax.text(3.35,-0.5,'(= EAST wall)',fontsize=7.5,color='#1565c0',ha='center')
 ax.text(-1.25,0.0,'SOUTH wall',fontsize=7.5,color='#6d4c41',rotation=90,ha='center')
 # furniture
 f(0.0,1.05,0.3,0.8,'Shoe cab.\\n0.80x0.30','#d7ccc8',6,90)
