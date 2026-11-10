@@ -32,3 +32,12 @@ Positions read from the scan; confirm on site (about +/-0.15 m) before ordering 
 | **Total** | **66,500** | **~39,500 (+10,000 teak)** |
 
 Note: essentials take about two-thirds of a Rs 1 lakh budget, so kitchen and bedrooms will need to stay lean unless the budget is near Rs 2 lakh.
+
+## Vastu layout (true N = right of page; W = top, S = stair side, E = bottom)
+File: living_dining_vastu.png
+- Mandir in the NE corner of the room, on the east wall; worshipper faces EAST; clear of the bath wall and walkway.
+- Sofa (heavy) on the south wall, sitters face north; storage in the SW corner; TV on the north wall at the NW end, away from the NE mandir corner.
+- Dining in the west part; head of family on the west bench faces EAST.
+- Room centre (Brahmasthan) kept open; shoe cabinet moved to the south wall, away from the mandir.
+- Colours: N/NE/E light blue, white, pale green; W white/grey; S/SW beige, peach, earthy brown; mandir cream/yellow with wood.
+- Fixed by the architecture (cannot change): entrance in the south wall, toilet/bath block in the flat's NE.
