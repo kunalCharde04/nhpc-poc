@@ -43,7 +43,7 @@ f(0.0,4.3,0.4,1.4,'Crockery unit\n1.40x0.40 (opt.)','#efebe9',6.5,90,ec='#999')
 f(3.2,3.85,0.4,0.85,'MANDIR\n0.85x0.40','#ffcc80',7,90,ec='#e65100')
 # prayer direction
 ax.add_patch(FancyArrowPatch((2.75,4.28),(3.15,4.28),arrowstyle='-|>',mutation_scale=16,color='#e65100',lw=2,zorder=6))
-ax.text(2.8,3.88,'worshipper\nfaces EAST',fontsize=7,color='#e65100',ha='center')
+ax.text(2.8,3.88,'worshipper\nfaces NORTH',fontsize=7,color='#e65100',ha='center')
 # circulation
 for p,q in [((1.05,0.7),(2.5,0.7)),((2.5,0.7),(2.5,3.2)),((2.5,3.2),(3.55,3.2)),((2.5,3.3),(2.5,4.45))]:
     ax.add_patch(FancyArrowPatch(p,q,arrowstyle='-|>',mutation_scale=12,color='#2e7d32',lw=1.5,zorder=6))
@@ -52,10 +52,11 @@ ax.text(2.45,0.9,'walkway',fontsize=7,color='#2e7d32',ha='right')
 ax.annotate('',(0,-0.8),(W,-0.8),arrowprops=dict(arrowstyle='<->'));ax.text(W/2,-0.72,'3.60 m',ha='center',va='bottom',fontsize=9)
 ax.annotate('',(-0.95,0),(-0.95,D),arrowprops=dict(arrowstyle='<->'));ax.text(-1.05,D/2,'5.80 m',rotation=90,ha='right',va='center',fontsize=9)
 ax.text(1.8,3.55,'LIVING  |  DINING',fontsize=8,color='#37474f',ha='center',alpha=.55)
-# north arrow
-ax.add_patch(FancyArrowPatch((-1.9,5.2),(-1.9,6.0),arrowstyle='-|>',mutation_scale=22,color='k',lw=2))
-ax.text(-1.9,6.1,'N',ha='center',fontsize=14,weight='bold')
-ax.text(-1.9,5.0,'S',ha='center',va='top',fontsize=9);
-ax.set_xlim(-2.4,4.6); ax.set_ylim(-1.2,6.6); ax.axis('off')
-ax.set_title("B/H-105 - Living & Dining: Proposed 2D Furniture Layout (North-up)\nScale ~1:50 | clear room 3.60 x 5.80 m | dashed red = door swing | green = circulation",fontsize=11)
+# compass (per owner's markings: true N = image right, W = top, S = left, E = bottom)
+ax.add_patch(FancyArrowPatch((-2.3,5.3),(-1.4,5.3),arrowstyle='-|>',mutation_scale=22,color='k',lw=2))
+ax.text(-1.25,5.3,'N',va='center',fontsize=14,weight='bold')
+ax.text(-1.85,5.6,'TRUE NORTH',ha='center',fontsize=7)
+ax.text(-1.85,4.9,'(W = top of page, S = stair side,\nE = bottom of page)',ha='center',va='top',fontsize=6.5)
+ax.set_xlim(-2.6,4.6); ax.set_ylim(-1.2,6.6); ax.axis('off')
+ax.set_title("B/H-105 - Living & Dining: Proposed 2D Furniture Layout (true N = right)\nScale ~1:50 | clear room 3.60 x 5.80 m | dashed red = door swing | green = circulation",fontsize=11)
 fig.savefig('living_dining_layout.png',dpi=130,bbox_inches='tight')
